@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+*.pyc.*
+.pytest_cache/
+.venv/
+.env
+credentials.json
+sa-key.json
+claimiq_streamlit_logs.json
+.claimiq.lock
+.claimiq_seen.json
+email_output/
+tmp/
+claimiq_hackathon/
+*.log
+*.invalid

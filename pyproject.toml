@@ -1,0 +1,25 @@
+[project]
+name = "claimiq-hackathon"
+version = "0.1.0"
+description = "ClaimIQ multi-agent insurance claims processing prototype using OpenAI APIs and Google Cloud data services."
+requires-python = ">=3.11"
+dependencies = [
+  "openai>=1.0.0",
+  "google-cloud-bigquery>=3.20.0",
+  "google-cloud-storage>=2.16.0",
+  "google-api-python-client>=2.130.0",
+  "google-auth-oauthlib>=1.2.0",
+  "python-dotenv>=1.0.1",
+  "streamlit>=1.35.0",
+  "pypdf>=4.0.0",
+  "python-docx>=1.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

@@ -1,0 +1,16 @@
+openai>=1.0.0
+google-cloud-bigquery>=3.20.0
+google-cloud-storage>=2.16.0
+google-api-python-client>=2.130.0
+google-auth-oauthlib>=1.2.0
+python-dotenv>=1.0.1
+streamlit>=1.35.0
+pypdf>=4.0.0
+python-docx>=1.1.0
+
+# PDF report generation
+reportlab>=4.0.0
+matplotlib>=3.8.0
+
+# Development and local validation
+pytest>=8.0.0

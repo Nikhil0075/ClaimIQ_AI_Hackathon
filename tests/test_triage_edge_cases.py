@@ -1,0 +1,144 @@
+from claimiq.agents.triage.functions import apply_hard_overrides, safe_triage
+
+
+def test_emergency_remains_critical_when_coverage_inactive():
+    result = safe_triage(
+        {
+            "claim_type": "health",
+            "diagnosis": "Acute myocardial infarction",
+            "procedure": "Emergency angioplasty",
+            "claim_summary": "Patient had a heart attack and needs emergency angioplasty.",
+        },
+        {"coverage_status": "not_covered", "policy_status": "expired"},
+        {"fraud_score": 0},
+    )
+
+    assert result["priority"] == "critical"
+    assert result["routing"] == "medical_emergency_review"
+    assert result["sla_hours"] == 0.25
+    assert result["coverage_status"] == "not_covered"
+
+
+def test_acl_authorization_requests_mri_when_missing():
+    result = safe_triage(
+        {
+            "claim_type": "health",
+            "diagnosis": "Complete ACL Tear",
+            "procedure": "ACL Reconstruction",
+            "missing_documents": ["mri_report"],
+            "claim_summary": "Cashless pre-authorization for ACL reconstruction.",
+        },
+        {"coverage_status": "covered"},
+        {"fraud_score": 0},
+    )
+
+    assert result["routing"] == "medical_document_request"
+    assert result["medical_necessity"] == "Needs evidence"
+    assert any(flag["flag_id"] == "mri_required_for_acl" for flag in result["clinical_flags"])
+
+
+def test_clinical_inconsistencies_trigger_medical_review():
+    result = safe_triage(
+        {
+            "claim_type": "health",
+            "gender": "Male",
+            "patient_age": 5,
+            "admission_date": "2026-07-10",
+            "discharge_date": "2026-07-08",
+            "diagnosis": "Pregnancy and age-related cataract",
+            "procedure": "Routine review",
+            "claim_summary": "Right knee ACL tear on prescription but left knee ACL tear in MRI.",
+        },
+        {"coverage_status": "covered"},
+        {"fraud_score": 0},
+    )
+
+    flag_ids = {flag["flag_id"] for flag in result["clinical_flags"]}
+    assert result["routing"] == "senior_review"
+    assert result["requires_manual_medical_review"] is True
+    assert {"male_pregnancy", "child_adult_disease", "laterality_conflict", "admission_after_discharge"} <= flag_ids
+
+
+def test_emergency_vitals_and_stemi_route_immediate_review():
+    result = safe_triage(
+        {
+            "claim_type": "health",
+            "diagnosis": "STEMI with cardiogenic shock",
+            "procedure": "Emergency PCI",
+            "vitals": "BP 82/50, HR 132, SpO2 88",
+            "claim_summary": "Patient has acute coronary syndrome with hypotension.",
+        },
+        {"coverage_status": "covered"},
+        {"fraud_score": 0},
+    )
+
+    assert result["routing"] == "medical_emergency_review"
+    assert result["triage_color"] == "red"
+    assert result["severity_score"] >= 80
+    assert result["recommended_specialist"] == "Cardiology Reviewer"
+    assert any(flag["flag_id"] == "critical_vital_threshold" for flag in result["clinical_flags"])
+
+
+def test_standard_mri_routes_to_radiology_without_emergency():
+    result = safe_triage(
+        {
+            "claim_type": "health",
+            "diagnosis": "Knee pain",
+            "procedure": "MRI knee",
+            "claim_summary": "Routine diagnostic MRI request for stable patient.",
+        },
+        {"coverage_status": "covered"},
+        {"fraud_score": 0},
+    )
+
+    assert result["routing"] == "senior_review"
+    assert result["recommended_specialist"] == "Radiology Reviewer"
+    assert result["severity_score"] < 50
+
+
+def test_triage_hard_overrides_accept_labeled_flag_confidence():
+    result = {
+        "priority": "normal",
+        "routing": "standard_review",
+        "clinical_flags": [
+            {
+                "flag_id": "model_flag",
+                "category": "clinical_mismatch",
+                "description": "Model identified a clinical concern.",
+                "confidence": "high",
+                "severity": "high",
+            }
+        ],
+    }
+
+    merged = apply_hard_overrides(
+        result,
+        {
+            "claim_type": "health",
+            "diagnosis": "Appendicitis",
+            "procedure": "Emergency appendectomy",
+            "claim_summary": "Patient admitted for emergency appendicitis surgery.",
+        },
+        {"coverage_status": "covered"},
+        {"fraud_score": 0},
+    )
+
+    model_flag = next(flag for flag in merged["clinical_flags"] if flag["flag_id"] == "model_flag")
+    assert model_flag["confidence"] == 0.85
+    assert merged["clinical_flags"]
+
+
+def test_triage_hard_overrides_normalize_numeric_priority():
+    merged = apply_hard_overrides(
+        {"priority": 2, "routing": "standard_review", "triage_color": "amber"},
+        {
+            "claim_type": "health",
+            "diagnosis": "Stable appendicitis post surgery",
+            "procedure": "Appendectomy",
+            "claim_summary": "Routine post-surgical health claim.",
+        },
+        {"coverage_status": "covered"},
+        {"fraud_score": 0},
+    )
+
+    assert merged["priority"] == "medium"

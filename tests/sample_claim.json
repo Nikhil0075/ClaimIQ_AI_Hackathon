@@ -1,0 +1,12 @@
+{
+  "claim_id": "CLM-HACK-0001",
+  "sender_email": "arjun.mehta@example.com",
+  "subject": "Motor claim for policy POL-482913",
+  "email_body": "Hello ClaimIQ team, I am Arjun Mehta. My policy number is POL-482913. My car was damaged in a road accident on 2026-06-10 near Whitefield, Bengaluru. The repair estimate from the garage is INR 185000. The police report is filed and photos plus invoice are attached.",
+  "documents_summary": {
+    "total_documents": 2,
+    "documents": ["repair_invoice.pdf", "vehicle_damage_photo.jpg"],
+    "aggregate_summary": "Repair invoice and vehicle damage photo were attached.",
+    "risk_signals": []
+  }
+}
