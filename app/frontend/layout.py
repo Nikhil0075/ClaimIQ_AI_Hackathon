@@ -6,6 +6,7 @@ import streamlit as st
 
 from frontend.config import AUTO_INTERVAL_SEC, LOGO_PATH, LOOKER_URL
 from frontend.utils import lock_active
+from streamlit_deploy import deployment_status
 
 
 def render_hero() -> None:
@@ -131,3 +132,22 @@ def render_controls() -> None:
             f'Open Looker Dashboard</a>',
             unsafe_allow_html=True,
         )
+
+    render_deployment_status()
+
+
+def render_deployment_status() -> None:
+    status = deployment_status()
+    items = [
+        ("Google Cloud", status["google_cloud"]),
+        ("Drive OAuth", status["drive_oauth_client"]),
+        ("Drive Token", status["drive_token"]),
+    ]
+    ready_count = sum(1 for _, item in items if item["ready"])
+    state = "ready" if ready_count == len(items) else "needs attention"
+    with st.expander(f"Deployment credentials: {ready_count}/{len(items)} ready ({state})", expanded=ready_count < len(items)):
+        for label, item in items:
+            if item["ready"]:
+                st.success(f"{label}: ready")
+            else:
+                st.warning(f"{label}: {item['hint']}")

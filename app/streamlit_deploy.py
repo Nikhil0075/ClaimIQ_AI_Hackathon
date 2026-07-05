@@ -112,6 +112,27 @@ def configure_streamlit_cloud_runtime() -> None:
         )
 
 
+def deployment_status() -> dict:
+    """Return non-secret deployment readiness details for UI diagnostics."""
+    google_credentials = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "")
+    drive_client = os.getenv("GOOGLE_OAUTH_CREDENTIALS", "")
+    drive_token = os.getenv("GOOGLE_DRIVE_TOKEN_PATH", "")
+    return {
+        "google_cloud": {
+            "ready": bool(google_credentials and Path(google_credentials).exists()),
+            "hint": "Set GOOGLE_APPLICATION_CREDENTIALS_JSON for BigQuery access.",
+        },
+        "drive_oauth_client": {
+            "ready": bool(drive_client and Path(drive_client).exists()),
+            "hint": "Set GOOGLE_OAUTH_CREDENTIALS_JSON from credentials.json.",
+        },
+        "drive_token": {
+            "ready": bool(drive_token and Path(drive_token).exists()),
+            "hint": "Set GOOGLE_DRIVE_TOKEN_JSON or GOOGLE_DRIVE_REFRESH_TOKEN.",
+        },
+    }
+
+
 def _copy_scalar_secrets_to_env() -> None:
     for key in _SCALAR_SECRET_KEYS:
         value = _get_secret(key)
