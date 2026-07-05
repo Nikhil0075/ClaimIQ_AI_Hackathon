@@ -60,6 +60,18 @@ _SCALAR_SECRET_KEYS = {
 def configure_streamlit_cloud_runtime() -> None:
     """Apply Streamlit secrets for deployed runtime compatibility."""
     _copy_scalar_secrets_to_env()
+    gcp_credentials_json = _get_secret("GOOGLE_APPLICATION_CREDENTIALS_JSON") or _get_secret(
+        "GCP_SERVICE_ACCOUNT_JSON"
+    )
+    if gcp_credentials_json:
+        runtime_dir = _runtime_secret_dir()
+        _write_json_secret(
+            raw_value=gcp_credentials_json,
+            secret_name="GOOGLE_APPLICATION_CREDENTIALS_JSON",
+            target_path=runtime_dir / "google_application_credentials.json",
+            env_name="GOOGLE_APPLICATION_CREDENTIALS",
+        )
+
     oauth_credentials_json = _get_secret("GOOGLE_OAUTH_CREDENTIALS_JSON")
     if oauth_credentials_json:
         runtime_dir = _runtime_secret_dir()
@@ -71,6 +83,8 @@ def configure_streamlit_cloud_runtime() -> None:
         )
 
     drive_token_json = _get_secret("GOOGLE_DRIVE_TOKEN_JSON")
+    if not drive_token_json:
+        drive_token_json = _build_drive_token_from_refresh_token(oauth_credentials_json)
     if drive_token_json:
         _write_json_secret(
             raw_value=drive_token_json,
@@ -132,4 +146,50 @@ def _normalize_json_secret(raw_value: str, secret_name: str) -> str:
         parsed = json.loads(raw_value)
     except json.JSONDecodeError as exc:
         raise RuntimeError(f"{secret_name} must contain valid JSON") from exc
+    if secret_name == "GOOGLE_DRIVE_TOKEN_JSON":
+        _validate_drive_token(parsed)
     return json.dumps(parsed, indent=2)
+
+
+def _build_drive_token_from_refresh_token(oauth_credentials_json: str | None) -> str | None:
+    refresh_token = _get_secret("GOOGLE_DRIVE_REFRESH_TOKEN")
+    if not refresh_token or not oauth_credentials_json:
+        return None
+
+    oauth_config = json.loads(str(oauth_credentials_json))
+    client_config = oauth_config.get("installed") or oauth_config.get("web") or {}
+    client_id = client_config.get("client_id")
+    client_secret = client_config.get("client_secret")
+    token_uri = client_config.get("token_uri", "https://oauth2.googleapis.com/token")
+    if not client_id or not client_secret:
+        raise RuntimeError(
+            "GOOGLE_OAUTH_CREDENTIALS_JSON must include client_id and client_secret "
+            "when GOOGLE_DRIVE_REFRESH_TOKEN is used"
+        )
+
+    return json.dumps(
+        {
+            "token": "",
+            "refresh_token": str(refresh_token),
+            "token_uri": token_uri,
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "scopes": ["https://www.googleapis.com/auth/drive.file"],
+        }
+    )
+
+
+def _validate_drive_token(parsed: dict) -> None:
+    if not isinstance(parsed, dict):
+        raise RuntimeError("GOOGLE_DRIVE_TOKEN_JSON must be a JSON object")
+    required = {"client_id", "client_secret", "refresh_token"}
+    if required.issubset(parsed):
+        return
+    if "installed" in parsed or "web" in parsed:
+        raise RuntimeError(
+            "GOOGLE_DRIVE_TOKEN_JSON must be the generated OAuth authorized-user token, "
+            "not the OAuth client credentials JSON. Paste the local drive_token.json there, "
+            "or set GOOGLE_DRIVE_REFRESH_TOKEN with GOOGLE_OAUTH_CREDENTIALS_JSON."
+        )
+    missing = ", ".join(sorted(required - set(parsed)))
+    raise RuntimeError(f"GOOGLE_DRIVE_TOKEN_JSON is missing required field(s): {missing}")

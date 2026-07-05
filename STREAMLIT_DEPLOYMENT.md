@@ -20,6 +20,7 @@ GCP_PROJECT_ID = "your-gcp-project-id"
 GOOGLE_CLOUD_PROJECT = "your-gcp-project-id"
 GCP_REGION = "us-central1"
 BQ_DATASET = "claims"
+GOOGLE_APPLICATION_CREDENTIALS_JSON = """{...contents of a Google service account JSON with BigQuery access...}"""
 
 GMAIL_ADDRESS = "your-claims-inbox@gmail.com"
 GMAIL_APP_PASSWORD = "your-gmail-app-password"
@@ -45,6 +46,33 @@ Streamlit Cloud cannot reliably perform the first browser consent flow, so:
 At runtime, `app/streamlit_deploy.py` writes both OAuth JSON secrets to private files
 and sets `GOOGLE_OAUTH_CREDENTIALS` plus `GOOGLE_DRIVE_TOKEN_PATH` for the existing
 Drive uploader.
+
+If the generated token JSON is inconvenient to paste, you can instead set:
+
+```toml
+GOOGLE_OAUTH_CREDENTIALS_JSON = """{...contents of credentials.json...}"""
+GOOGLE_DRIVE_REFRESH_TOKEN = "1//..."
+```
+
+The app will build the authorized-user token file from the OAuth client JSON and
+refresh token.
+
+Do not paste `credentials.json` into `GOOGLE_DRIVE_TOKEN_JSON`. That secret must
+contain an authorized-user token with `client_id`, `client_secret`, and
+`refresh_token`.
+
+## BigQuery / Google Cloud Credentials
+
+Streamlit Cloud is not Google Compute Engine, so Google libraries cannot use the
+metadata server. If you see `metadata.google.internal` timeout errors, set:
+
+```toml
+GOOGLE_APPLICATION_CREDENTIALS_JSON = """{...service account JSON...}"""
+```
+
+The service account needs access to the project in `GCP_PROJECT_ID` and the
+dataset in `BQ_DATASET`. At minimum, grant BigQuery Job User and BigQuery Data
+Editor for the ClaimIQ dataset.
 
 ## Verification
 
