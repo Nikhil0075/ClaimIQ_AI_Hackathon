@@ -14,3 +14,4 @@ tmp/
 claimiq_hackathon/
 *.log
 *.invalid
+.streamlit/secrets.toml
