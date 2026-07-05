@@ -74,6 +74,10 @@ The service account needs access to the project in `GCP_PROJECT_ID` and the
 dataset in `BQ_DATASET`. At minimum, grant BigQuery Job User and BigQuery Data
 Editor for the ClaimIQ dataset.
 
+The app logs a startup deployment diagnostic. If this secret is missing, Google
+Cloud lookups/writes fail fast with a clear configuration message instead of
+waiting on the unavailable metadata server.
+
 ## Verification
 
 After deployment:

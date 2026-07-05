@@ -16,6 +16,7 @@ import hashlib
 import json
 import logging
 import os
+from pathlib import Path
 from datetime import datetime, timezone
 
 try:
@@ -34,9 +35,34 @@ log = logging.getLogger("claimiq.bq")
 _bq_client = None
 
 
+def _has_application_default_credentials() -> bool:
+    configured = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+    if configured and Path(configured).exists():
+        return True
+
+    candidates = [
+        Path.home() / ".config" / "gcloud" / "application_default_credentials.json",
+    ]
+    appdata = os.getenv("APPDATA")
+    if appdata:
+        candidates.append(Path(appdata) / "gcloud" / "application_default_credentials.json")
+
+    return any(path.exists() for path in candidates)
+
+
+def _require_google_credentials() -> None:
+    if _has_application_default_credentials():
+        return
+    raise RuntimeError(
+        "Google Cloud credentials are not configured. In Streamlit Cloud, set "
+        "GOOGLE_APPLICATION_CREDENTIALS_JSON to a service account JSON with BigQuery access."
+    )
+
+
 def _client():
     global _bq_client
     if _bq_client is None:
+        _require_google_credentials()
         from google.cloud import bigquery
 
         _bq_client = bigquery.Client(project=PROJECT_ID)

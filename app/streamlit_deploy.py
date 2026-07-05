@@ -9,10 +9,13 @@ Drive uploader can keep using GOOGLE_OAUTH_CREDENTIALS and its cached token.
 from __future__ import annotations
 
 import json
+import logging
 import os
 from pathlib import Path
 
 import streamlit as st
+
+log = logging.getLogger("claimiq.streamlit_deploy")
 
 
 _SCALAR_SECRET_KEYS = {
@@ -71,6 +74,12 @@ def configure_streamlit_cloud_runtime() -> None:
             target_path=runtime_dir / "google_application_credentials.json",
             env_name="GOOGLE_APPLICATION_CREDENTIALS",
         )
+        log.info("[Deploy] Google Cloud credentials file configured for ADC")
+    else:
+        log.warning(
+            "[Deploy] GOOGLE_APPLICATION_CREDENTIALS_JSON is not set; BigQuery will use "
+            "local ADC if available, otherwise Google Cloud writes/lookups will be skipped."
+        )
 
     oauth_credentials_json = _get_secret("GOOGLE_OAUTH_CREDENTIALS_JSON")
     if oauth_credentials_json:
@@ -81,6 +90,9 @@ def configure_streamlit_cloud_runtime() -> None:
             target_path=runtime_dir / "google_oauth_credentials.json",
             env_name="GOOGLE_OAUTH_CREDENTIALS",
         )
+        log.info("[Deploy] Google Drive OAuth client JSON configured")
+    else:
+        log.warning("[Deploy] GOOGLE_OAUTH_CREDENTIALS_JSON is not set; Drive upload cannot authorize.")
 
     drive_token_json = _get_secret("GOOGLE_DRIVE_TOKEN_JSON")
     if not drive_token_json:
@@ -91,6 +103,12 @@ def configure_streamlit_cloud_runtime() -> None:
             secret_name="GOOGLE_DRIVE_TOKEN_JSON",
             target_path=_drive_token_path(),
             env_name="GOOGLE_DRIVE_TOKEN_PATH",
+        )
+        log.info("[Deploy] Google Drive authorized-user token configured")
+    else:
+        log.warning(
+            "[Deploy] Drive token is not set. Provide GOOGLE_DRIVE_TOKEN_JSON or "
+            "GOOGLE_DRIVE_REFRESH_TOKEN."
         )
 
 
