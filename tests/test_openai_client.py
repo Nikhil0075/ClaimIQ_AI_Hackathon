@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 
 from claimiq.shared import openai_client
-from claimiq.shared.openai_client import generate_json, parse_json
+from claimiq.shared.openai_client import generate_json, generate_json_messages, parse_json
 
 
 def test_parse_json_extracts_object_from_prose_wrapped_response():
@@ -37,3 +37,33 @@ def test_generate_json_retries_truncated_json(monkeypatch):
     assert len(calls) == 2
     assert calls[0]["max_output_tokens"] == 4096
     assert calls[1]["max_output_tokens"] == 8192
+
+
+def test_generate_json_messages_retries_short_rate_limit(monkeypatch):
+    calls = []
+
+    class FakeRateLimitError(Exception):
+        status_code = 429
+
+    class FakeCompletions:
+        def create(self, **kwargs):
+            calls.append(kwargs)
+            if len(calls) == 1:
+                raise FakeRateLimitError("Rate limit reached. Please try again in 181ms.")
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(content='{"document_type":"id_card","confidence":0.8}')
+                    )
+                ]
+            )
+
+    fake_client = SimpleNamespace(chat=SimpleNamespace(completions=FakeCompletions()))
+    monkeypatch.setattr(openai_client, "_openai_enabled", lambda: True)
+    monkeypatch.setattr(openai_client, "_get_client", lambda: fake_client)
+    monkeypatch.setattr(openai_client.time, "sleep", lambda seconds: None)
+
+    result = generate_json_messages([{"role": "user", "content": "return json"}], model="gpt-4o-mini")
+
+    assert result["document_type"] == "id_card"
+    assert len(calls) == 2

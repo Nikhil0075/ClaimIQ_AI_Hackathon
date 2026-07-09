@@ -1,5 +1,7 @@
+from pathlib import Path
+
 from claimiq.agents.intake.functions import deterministic_extract, detect_quality_issues, enrich_intake_result
-from claimiq.agents.intake.tool import analyze_uploaded_document, merge_document_summaries
+from claimiq.agents.intake.tool import analyze_uploaded_document, extract_multimodal_documents, merge_document_summaries
 
 
 def test_deterministic_extract_does_not_use_policy_number_as_amount():
@@ -87,6 +89,30 @@ def test_multimodal_pdf_replaces_unreadable_attachment_summary():
     assert result["per_document"][0]["document_type"] == "fir_or_police_report"
 
 
+def test_multimodal_rate_limit_is_retryable_not_quality_issue(monkeypatch):
+    class FakeRateLimitError(Exception):
+        status_code = 429
+
+    def fake_analyze_uploaded_document(document):
+        raise FakeRateLimitError("Rate limit reached. Please try again in 181ms.")
+
+    monkeypatch.setattr("claimiq.agents.intake.tool.analyze_uploaded_document", fake_analyze_uploaded_document)
+
+    result = extract_multimodal_documents([
+        {
+            "filename": "Insurance_Card.png",
+            "mime_type": "image/png",
+            "data": b"fake",
+        }
+    ])
+
+    doc = result["per_document"][0]
+    assert doc["error_type"] == "rate_limit_exceeded"
+    assert doc["retryable"] is True
+    assert doc["quality_issues"] == []
+    assert "rate limited" in doc["summary"].lower()
+
+
 def test_acute_appendicitis_does_not_trigger_cut_quality_issue():
     result = detect_quality_issues({
         "aggregate_summary": "Patient had acute appendicitis and emergency laparoscopic appendectomy.",
@@ -164,6 +190,82 @@ def test_property_fire_uses_document_claimed_amount_when_top_level_amount_is_zer
     result = enrich_intake_result(ai_result, "Policy Number: PRO234567. Fire damage.", docs)
 
     assert result["claim_amount"] == 1580000
+
+
+def test_motor_email_claim_amount_beats_policy_card_limit():
+    email_body = Path("tests/Motor Claim - Car Accident/mail.txt").read_text(encoding="utf-8")
+    docs = {
+        "documents_analyzed": ["Insurance_Card.png", "Repair_Estimate_from_Quick_Fix_Motors.pdf"],
+        "per_document": [
+            {
+                "filename": "Insurance_Card.png",
+                "document_type": "insurance_card",
+                "summary": "Motor insurance card for MCA789012 with IDV Rs 4,50,000.",
+                "extracted_fields": {"estimated_amount": 450000, "claimed_amount": 0, "policy_amount": 0},
+                "confidence": 0.85,
+            },
+            {
+                "filename": "Repair_Estimate_from_Quick_Fix_Motors.pdf",
+                "document_type": "repair_quote",
+                "summary": "Repair estimate from Quick Fix Motors. Total estimate amount is Rs 169,050.",
+                "extracted_fields": {"estimated_amount": 169050, "claimed_amount": 0, "policy_amount": 0},
+                "confidence": 0.85,
+            },
+        ],
+        "risk_signals": [],
+    }
+    ai_result = {
+        "intake_status": "complete",
+        "claim_type": "motor",
+        "policy_number": "MCA789012",
+        "claim_amount": 0,
+        "estimated_amount": 169050,
+        "missing_documents": [],
+        "missing_information": ["claim_amount"],
+    }
+
+    result = enrich_intake_result(ai_result, email_body, docs)
+
+    assert result["claim_amount"] == 160000
+    assert result["estimated_amount"] == 169050
+    assert "claim_amount" not in result["missing_information"]
+
+
+def test_document_claim_amount_ignores_policy_card_limit_when_email_amount_missing():
+    docs = {
+        "documents_analyzed": ["Insurance_Card.png", "Repair_Estimate_from_Quick_Fix_Motors.pdf"],
+        "per_document": [
+            {
+                "filename": "Insurance_Card.png",
+                "document_type": "insurance_card",
+                "summary": "Motor insurance card for MCA789012 with IDV Rs 4,50,000.",
+                "extracted_fields": {"estimated_amount": 450000, "claimed_amount": 0, "policy_amount": 0},
+                "confidence": 0.85,
+            },
+            {
+                "filename": "Repair_Estimate_from_Quick_Fix_Motors.pdf",
+                "document_type": "repair_quote",
+                "summary": "Repair estimate from Quick Fix Motors. Total estimate amount is Rs 169,050.",
+                "extracted_fields": {"estimated_amount": 169050, "claimed_amount": 0, "policy_amount": 0},
+                "confidence": 0.85,
+            },
+        ],
+        "risk_signals": [],
+    }
+    ai_result = {
+        "intake_status": "complete",
+        "claim_type": "motor",
+        "policy_number": "MCA789012",
+        "claim_amount": 0,
+        "estimated_amount": 0,
+        "missing_documents": [],
+        "missing_information": ["claim_amount"],
+    }
+
+    result = enrich_intake_result(ai_result, "Policy Number: MCA789012. Car accident near Noida.", docs)
+
+    assert result["claim_amount"] == 169050
+    assert result["estimated_amount"] == 169050
 
 
 def test_scanned_pdf_is_rendered_for_multimodal_analysis(monkeypatch):

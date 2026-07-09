@@ -9,7 +9,7 @@ import subprocess
 import uuid
 from typing import Any
 
-from claimiq.shared.openai_client import generate_json, generate_json_messages, image_content_part
+from claimiq.shared.openai_client import generate_json, generate_json_messages, image_content_part, is_rate_limit_error
 from claimiq.shared.config import settings
 
 
@@ -151,7 +151,7 @@ Schema enforcement:
 DOCUMENT_SCHEMA_PROMPT = """Return ONLY valid JSON with this shape and no extra top-level keys:
 {
   "filename": "string",
-  "document_type": "health_card|doctor_prescription|mri_report|hospital_estimate|pre_authorization_form|kyc_document|repair_invoice|repair_quote|damage_valuation|damage_photo|fire_brigade_report|fir_or_police_report|property_policy|supporting_document|other",
+  "document_type": "health_card|insurance_card|doctor_prescription|mri_report|hospital_estimate|pre_authorization_form|kyc_document|repair_invoice|repair_quote|damage_valuation|damage_photo|fire_brigade_report|fir_or_police_report|property_policy|supporting_document|other",
   "summary": "short factual summary",
   "extracted_fields": {
     "patient_name": "string or null",
@@ -180,6 +180,10 @@ DOCUMENT_SCHEMA_PROMPT = """Return ONLY valid JSON with this shape and no extra 
 Document classification rules:
 - Classify the document by visible content, not only filename. Use other when
   the type is uncertain.
+- For policy documents, insurance cards, health cards, and ID/KYC documents, do
+  not put sum insured, IDV, coverage limits, premium, deductible, or policy
+  limit values into estimated_amount or claimed_amount. Use policy_amount only
+  when a policy-side amount must be captured.
 - Confidence high 0.80-1.00 means clear, legible, complete, and type is certain.
   Medium 0.50-0.79 means partially legible or missing minor fields. Low below
   0.50 means unreadable, heavily cropped, redacted, unsupported, or type is
@@ -233,17 +237,32 @@ def extract_multimodal_documents(uploaded_documents: list[dict[str, Any]]) -> di
         try:
             result = analyze_uploaded_document(document)
         except Exception as exc:
-            result = {
-                "filename": document.get("filename", "unknown"),
-                "document_type": "other",
-                "summary": f"Multimodal extraction failed: {exc}",
-                "extracted_fields": {},
-                "quality_issues": ["multimodal_extraction_failed"],
-                "risk_signals": [],
-                "supports_claim": None,
-                "confidence": 0.0,
-                "error": str(exc),
-            }
+            if is_rate_limit_error(exc):
+                result = {
+                    "filename": document.get("filename", "unknown"),
+                    "document_type": "other",
+                    "summary": "Multimodal extraction was temporarily rate limited by the OpenAI API; retry this document.",
+                    "extracted_fields": {},
+                    "quality_issues": [],
+                    "risk_signals": [],
+                    "supports_claim": None,
+                    "confidence": 0.0,
+                    "error": str(exc),
+                    "error_type": "rate_limit_exceeded",
+                    "retryable": True,
+                }
+            else:
+                result = {
+                    "filename": document.get("filename", "unknown"),
+                    "document_type": "other",
+                    "summary": f"Multimodal extraction failed: {exc}",
+                    "extracted_fields": {},
+                    "quality_issues": ["multimodal_extraction_failed"],
+                    "risk_signals": [],
+                    "supports_claim": None,
+                    "confidence": 0.0,
+                    "error": str(exc),
+                }
         per_document.append(result)
 
     if not per_document:

@@ -7,6 +7,8 @@ import logging
 import os
 import re
 import base64
+import time
+from collections.abc import Callable
 from typing import Any
 
 from .config import settings
@@ -140,12 +142,12 @@ def generate_json(
         request["text"] = {"format": {"type": "json_object"}}
 
     try:
-        response = _get_client().responses.create(**request)
+        response = _call_with_rate_limit_retry(lambda: _get_client().responses.create(**request))
     except Exception as exc:
         if "text" in request and _is_format_error(exc):
             log.warning("Model %s rejected JSON response format (%s) — retrying without", selected_model, exc)
             request.pop("text", None)
-            response = _get_client().responses.create(**request)
+            response = _call_with_rate_limit_retry(lambda: _get_client().responses.create(**request))
         else:
             raise
     parsed = parse_json(_response_text(response))
@@ -153,9 +155,7 @@ def generate_json(
         retry_tokens = _retry_token_budget(max_tokens)
         log.info("Retrying OpenAI JSON generation with max_output_tokens=%s", retry_tokens)
         request["max_output_tokens"] = retry_tokens
-        response = _get_client().responses.create(
-            **request,
-        )
+        response = _call_with_rate_limit_retry(lambda: _get_client().responses.create(**request))
         parsed = parse_json(_response_text(response))
     return parsed
 
@@ -192,12 +192,12 @@ def generate_json_messages(
         request["response_format"] = {"type": "json_object"}
 
     try:
-        response = _get_client().chat.completions.create(**request)
+        response = _call_with_rate_limit_retry(lambda: _get_client().chat.completions.create(**request))
     except Exception as exc:
         if "response_format" in request and _is_format_error(exc):
             log.warning("Model %s rejected response_format (%s) — retrying without", selected_model, exc)
             request.pop("response_format", None)
-            response = _get_client().chat.completions.create(**request)
+            response = _call_with_rate_limit_retry(lambda: _get_client().chat.completions.create(**request))
         else:
             raise
     content = response.choices[0].message.content or ""
@@ -209,7 +209,7 @@ def generate_json_messages(
             request["max_completion_tokens"] = retry_tokens
         else:
             request["max_tokens"] = retry_tokens
-        response = _get_client().chat.completions.create(**request)
+        response = _call_with_rate_limit_retry(lambda: _get_client().chat.completions.create(**request))
         content = response.choices[0].message.content or ""
         parsed = parse_json(content)
     return parsed
@@ -221,6 +221,56 @@ def image_content_part(data: bytes, mime_type: str) -> dict[str, Any]:
         "type": "image_url",
         "image_url": {"url": f"data:{mime_type};base64,{encoded}"},
     }
+
+
+def is_rate_limit_error(exc: Exception) -> bool:
+    status_code = getattr(exc, "status_code", None)
+    if status_code == 429:
+        return True
+    code = str(getattr(exc, "code", "") or "").lower()
+    if code in {"rate_limit", "rate_limit_exceeded"}:
+        return True
+    text = str(exc).lower()
+    return "rate limit" in text or "rate_limit_exceeded" in text or "too many requests" in text
+
+
+def _call_with_rate_limit_retry(call: Callable[[], Any]) -> Any:
+    max_attempts = max(1, int(os.getenv("CLAIMIQ_OPENAI_RATE_LIMIT_ATTEMPTS", "4")))
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return call()
+        except Exception as exc:
+            if not is_rate_limit_error(exc) or attempt >= max_attempts:
+                raise
+            delay = _rate_limit_delay_seconds(exc, attempt)
+            log.warning(
+                "OpenAI rate limit hit; retrying attempt %s/%s after %.2fs",
+                attempt + 1,
+                max_attempts,
+                delay,
+            )
+            time.sleep(delay)
+    raise RuntimeError("OpenAI rate-limit retry loop ended unexpectedly")
+
+
+def _rate_limit_delay_seconds(exc: Exception, attempt: int) -> float:
+    response = getattr(exc, "response", None)
+    headers = getattr(response, "headers", {}) or {}
+    raw_retry_after = headers.get("retry-after") or headers.get("Retry-After")
+    if raw_retry_after:
+        try:
+            return min(max(float(raw_retry_after), 0.1), 8.0)
+        except ValueError:
+            pass
+
+    text = str(exc)
+    ms_match = re.search(r"try again in\s+(\d+(?:\.\d+)?)\s*ms", text, flags=re.IGNORECASE)
+    if ms_match:
+        return min(max(float(ms_match.group(1)) / 1000.0, 0.1), 8.0)
+    sec_match = re.search(r"try again in\s+(\d+(?:\.\d+)?)\s*s", text, flags=re.IGNORECASE)
+    if sec_match:
+        return min(max(float(sec_match.group(1)), 0.1), 8.0)
+    return min(0.5 * (2 ** (attempt - 1)), 8.0)
 
 
 _DEFAULT_REASONING_PREFIXES = "o1,o3,o4,gpt-5"

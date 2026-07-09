@@ -19,7 +19,27 @@ AMOUNT_RE = re.compile(
     re.IGNORECASE,
 )
 
+CLAIM_AMOUNT_CONTEXT_RE = re.compile(
+    r"(?:claim(?:ed)?\s+amount|claim\s+value|estimated\s+repair\s+cost|"
+    r"estimated\s+cost|estimated\s+amount|estimate\s+amount|repair\s+estimate|"
+    r"total\s+estimate(?:\s+amount)?|invoice\s+amount|bill\s+amount|"
+    r"damage\s+(?:estimate|valuation|value|cost))\s*[:\-]?\s*"
+    r"(?:INR|Rs\.?|\$)?\s*([0-9][0-9,]*(?:\.\d{1,2})?)",
+    re.IGNORECASE,
+)
+AMOUNT_CONTEXT_BLOCKLIST = (
+    "sum insured",
+    "policy amount",
+    "policy limit",
+    "coverage limit",
+    "insured declared value",
+    "idv",
+    "premium",
+    "deductible",
+)
+
 DOCUMENT_ALIASES = {
+    "insurance_card": ("motor insurance card", "vehicle insurance card", "insurance card"),
     "health_card": ("health card", "ecard", "e-card", "insurance card", "policy card"),
     "policy_number": ("policy number", "policy no", "policy:", "pol-", "ins-", "hlt-"),
     "doctor_prescription": ("prescription", "doctor prescription", "rx"),
@@ -100,13 +120,7 @@ def deterministic_extract(email_body: str, documents_summary: dict[str, Any] | N
     hospital = HOSPITAL_RE.search(text)
     procedure = PROCEDURE_RE.search(text)
     diagnosis = DIAGNOSIS_RE.search(text)
-    amount = None
-    for match in AMOUNT_RE.finditer(text):
-        raw_amount = match.group(1) or match.group(2)
-        candidate = float(raw_amount.replace(",", ""))
-        if candidate >= 1000:
-            amount = candidate
-            break
+    amount = _extract_claim_amount(text)
 
     date_match = DATE_RE.search(text)
     month_date_match = MONTH_DATE_RE.search(text)
@@ -189,9 +203,13 @@ def enrich_intake_result(
         "patient_name",
         "diagnosis",
         "procedure",
+        "claim_amount",
         "estimated_amount",
     ):
-        if key not in enriched or enriched.get(key) in (None, "", []):
+        if key in {"claim_amount", "estimated_amount"}:
+            if _as_positive_amount(enriched.get(key)) <= 0 and _as_positive_amount(deterministic.get(key)) > 0:
+                enriched[key] = deterministic.get(key)
+        elif key not in enriched or enriched.get(key) in (None, "", []):
             enriched[key] = deterministic.get(key)
 
     # Only merge deterministic missing_information when the AI didn't produce its own list.
@@ -398,6 +416,32 @@ def missing_information(
     return sorted(set(missing))
 
 
+def _extract_claim_amount(text: str) -> float | None:
+    for match in CLAIM_AMOUNT_CONTEXT_RE.finditer(text or ""):
+        candidate = _parse_amount_match(match.group(1))
+        if candidate and candidate >= 1000:
+            return candidate
+
+    for match in AMOUNT_RE.finditer(text or ""):
+        prefix = text[max(0, match.start() - 80):match.start()].lower()
+        if any(blocked in prefix for blocked in AMOUNT_CONTEXT_BLOCKLIST):
+            continue
+        raw_amount = match.group(1) or match.group(2)
+        candidate = _parse_amount_match(raw_amount)
+        if candidate and candidate >= 1000:
+            return candidate
+    return None
+
+
+def _parse_amount_match(raw_amount: str | None) -> float | None:
+    if not raw_amount:
+        return None
+    try:
+        return float(raw_amount.replace(",", ""))
+    except ValueError:
+        return None
+
+
 def reconcile_intake_result(enriched: dict[str, Any], documents_summary: dict[str, Any]) -> dict[str, Any]:
     """Remove contradictions introduced by model output or deterministic backfill."""
     policy_number = str(enriched.get("policy_number") or "").strip()
@@ -504,6 +548,22 @@ _AMOUNT_FIELD_BLOCKLIST = (
     "co_pay",
     "copay",
 )
+_NON_CLAIM_AMOUNT_DOCUMENT_TERMS = (
+    "property_policy",
+    "policy.pdf",
+    "policy copy",
+    "policy document",
+    "insurance policy",
+    "insurance_card",
+    "insurance card",
+    "health_card",
+    "health card",
+    "kyc",
+    "id_card",
+    "id card",
+    "driving_license",
+    "driving license",
+)
 
 
 def _best_document_claim_amount(docs: dict[str, Any]) -> float:
@@ -516,6 +576,8 @@ def _best_document_claim_amount(docs: dict[str, Any]) -> float:
     candidates: list[float] = []
     for item in docs.get("per_document") or []:
         if not isinstance(item, dict):
+            continue
+        if _is_non_claim_amount_document(item):
             continue
         fields = item.get("extracted_fields") if isinstance(item.get("extracted_fields"), dict) else {}
         for key, raw in fields.items():
@@ -535,6 +597,14 @@ def _best_document_claim_amount(docs: dict[str, Any]) -> float:
             if amount >= 100:
                 candidates.append(amount)
     return max(candidates) if candidates else 0.0
+
+
+def _is_non_claim_amount_document(item: dict[str, Any]) -> bool:
+    haystack = " ".join(
+        str(item.get(key) or "")
+        for key in ("filename", "document_type", "summary", "modality", "mime_type")
+    ).lower().replace("-", "_")
+    return any(term.replace("-", "_") in haystack for term in _NON_CLAIM_AMOUNT_DOCUMENT_TERMS)
 
 
 def _first_doc_fact(docs: dict[str, Any], key: str) -> str | None:
