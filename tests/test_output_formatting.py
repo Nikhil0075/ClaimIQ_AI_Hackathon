@@ -2,6 +2,7 @@ from io import BytesIO
 
 from pypdf import PdfReader
 
+from app.email_io import build_summary_email
 from claimiq.tools.email_tool import _tpl_routing_assigned
 from claimiq.tools.report_tool import generate_claim_report
 
@@ -59,6 +60,35 @@ def test_routing_email_tolerates_numeric_priority():
 
     assert "CLM-NUMERIC-PRIORITY" in subject
     assert "Priority Level" in body
+
+
+def test_routing_email_keeps_string_next_steps_as_single_item():
+    outputs = _outputs_with_numeric_priority()
+    outputs["triage"]["recommended_next_steps"] = "Obtain treating hospital discharge summary."
+
+    _, body = _tpl_routing_assigned(
+        "CLM-STRING-NEXT-STEPS",
+        "Meera Sharma",
+        "TRAVEL",
+        "TRV123456",
+        "INR 160,000",
+        outputs["coverage"],
+        outputs["fraud"],
+        outputs["triage"],
+    )
+
+    assert "1. Obtain treating hospital discharge summary." in body
+    assert "1. O\n  2. b" not in body
+
+
+def test_summary_email_keeps_string_next_steps_as_single_item():
+    outputs = _outputs_with_numeric_priority()
+    outputs["triage"]["recommended_next_steps"] = "Obtain treating hospital discharge summary."
+
+    body = build_summary_email("CLM-SUMMARY-STRING", outputs)
+
+    assert "1. Obtain treating hospital discharge summary." in body
+    assert "1. O\n  2. b" not in body
 
 
 def test_report_generation_tolerates_numeric_priority():

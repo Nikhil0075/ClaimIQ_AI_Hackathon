@@ -36,6 +36,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import smtplib
 import textwrap
 from email import encoders
@@ -62,6 +63,27 @@ FRAUD_EMAIL_THRESHOLD = int(os.getenv("FRAUD_EMAIL_THRESHOLD", "50"))  # send al
 def _upper_label(value: Any, default: str = "N/A") -> str:
     text = str(value if value not in (None, "") else default)
     return text.upper()
+
+
+def _as_list(value: Any) -> list[Any]:
+    """Coerce optional list-like output without splitting plain strings."""
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    if isinstance(value, tuple | set):
+        return list(value)
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return []
+        lines = [
+            re.sub(r"^\s*(?:[-*]|\d+[.)])\s*", "", line).strip()
+            for line in text.splitlines()
+        ]
+        lines = [line for line in lines if line]
+        return lines if len(lines) > 1 else [text]
+    return [value]
 
 # ── Known pipeline stages ──────────────────────────────────────────────────────
 
@@ -441,7 +463,7 @@ def _tpl_routing_assigned(claim_id, claimant, claim_type, policy_num, amount_str
     routing      = (triage.get("routing") or "standard_review").replace("_", " ").title()
     sla          = triage.get("sla_hours") or 48
     triage_color = (triage.get("triage_color") or "amber").lower()
-    next_steps   = triage.get("recommended_next_steps") or []
+    next_steps   = _as_list(triage.get("recommended_next_steps"))
     human_flag   = triage.get("required_human_approval", True)
     cov_status   = coverage.get("coverage_status", "needs_review")
 

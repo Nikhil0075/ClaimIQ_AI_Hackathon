@@ -16,6 +16,7 @@ import email as _email_lib
 import imaplib
 import logging
 import os
+import re
 import smtplib
 import textwrap
 from email.mime.multipart import MIMEMultipart
@@ -41,6 +42,27 @@ log = logging.getLogger("claimiq.email")
 def _upper_label(value, default="N/A"):
     text = str(value if value not in (None, "") else default)
     return text.upper()
+
+
+def _as_list(value):
+    """Coerce optional list-like output without splitting plain strings."""
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    if isinstance(value, (tuple, set)):
+        return list(value)
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return []
+        lines = [
+            re.sub(r"^\s*(?:[-*]|\d+[.)])\s*", "", line).strip()
+            for line in text.splitlines()
+        ]
+        lines = [line for line in lines if line]
+        return lines if len(lines) > 1 else [text]
+    return [value]
 
 
 # ── READ: Gmail IMAP ──────────────────────────────────────────────────────────
@@ -209,7 +231,7 @@ def build_summary_email(
 
     steps = "\n".join(
         f"  {i+1}. {s}"
-        for i, s in enumerate(triage.get("recommended_next_steps") or [])
+        for i, s in enumerate(_as_list(triage.get("recommended_next_steps")))
     ) or "  An adjuster will contact you shortly."
 
     coverage_pos = copilot.get("coverage_position", {})
