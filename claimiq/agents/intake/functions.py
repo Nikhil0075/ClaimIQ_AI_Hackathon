@@ -332,6 +332,8 @@ def mandatory_missing_documents(
 
     missing = set(docs.get("missing_documents") or [])
     missing.update(required.difference(set(documents_received)))
+    if claim_type == "motor" and _has_motor_repair_evidence(documents_received, docs):
+        missing.discard("repair_invoice")
     if claim_type == "property" and _has_property_valuation_evidence(documents_received, docs):
         missing.discard("repair_invoice")
     return sorted(str(item) for item in missing if item)
@@ -465,6 +467,22 @@ def reconcile_intake_result(enriched: dict[str, Any], documents_summary: dict[st
             item for item in missing_information_values
             if item not in {"document:repair_invoice", "document:repair_quote"}
         ]
+    if claim_type == "motor" and _has_motor_repair_evidence(documents_received, documents_summary, classified):
+        missing_documents = [
+            item for item in missing_documents
+            if item not in {"repair_invoice", "repair_quote", "repair_estimate"}
+        ]
+        missing_information_values = [
+            item for item in missing_information_values
+            if item not in {
+                "repair_invoice",
+                "repair_quote",
+                "repair_estimate",
+                "document:repair_invoice",
+                "document:repair_quote",
+                "document:repair_estimate",
+            }
+        ]
 
     estimated_amount = _as_positive_amount(enriched.get("estimated_amount"))
     claim_amount = _as_positive_amount(enriched.get("claim_amount"))
@@ -487,7 +505,7 @@ def reconcile_intake_result(enriched: dict[str, Any], documents_summary: dict[st
     enriched["missing_information"] = sorted(set(missing_information_values))
     if not enriched["missing_documents"] and enriched.get("message_to_customer"):
         text = str(enriched["message_to_customer"]).lower()
-        if "missing document" in text or "upload" in text:
+        if "missing document" in text or "upload" in text or "provide" in text or "repair invoice" in text:
             enriched["message_to_customer"] = None
     if enriched.get("intake_status") == "incomplete" and not enriched["missing_documents"]:
         if enriched.get("quality_issues") or enriched.get("consistency_issues"):
@@ -511,6 +529,30 @@ def _has_property_valuation_evidence(
         if isinstance(item, dict):
             evidence += " " + " ".join(str(item.get(key) or "") for key in ("filename", "document_type", "summary")).lower()
     return any(term in evidence for term in ("repair_invoice", "repair quote", "contractor quote", "damage valuation", "damage_assessment", "damage assessment", "valuation", "loss assessor"))
+
+
+def _has_motor_repair_evidence(
+    documents_received: list[str],
+    docs: dict[str, Any],
+    classified: dict[str, Any] | None = None,
+) -> bool:
+    evidence = " ".join(documents_received).lower().replace("_", " ")
+    evidence += " " + " ".join(str(value) for value in (classified or {}).values()).lower().replace("_", " ")
+    evidence += " " + " ".join(str(key) for key in (classified or {}).keys()).lower().replace("_", " ")
+    for item in docs.get("per_document") or []:
+        if isinstance(item, dict):
+            evidence += " " + " ".join(str(item.get(key) or "") for key in ("filename", "document_type", "summary")).lower().replace("_", " ")
+    return any(
+        term in evidence
+        for term in (
+            "repair invoice",
+            "repair estimate",
+            "repair quote",
+            "garage estimate",
+            "garage invoice",
+            "quick fix motors",
+        )
+    )
 
 
 def _as_positive_amount(value: Any) -> float:

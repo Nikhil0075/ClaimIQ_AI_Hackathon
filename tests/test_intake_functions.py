@@ -268,6 +268,62 @@ def test_document_claim_amount_ignores_policy_card_limit_when_email_amount_missi
     assert result["estimated_amount"] == 169050
 
 
+def test_motor_repair_estimate_satisfies_repair_invoice_slot():
+    docs = {
+        "documents_analyzed": ["Repair_Estimate_from_Quick_Fix_Motors.pdf", "damage_photo_01.png"],
+        "per_document": [
+            {
+                "filename": "Repair_Estimate_from_Quick_Fix_Motors.pdf",
+                "document_type": "repair_estimate",
+                "summary": "Repair estimate from Quick Fix Motors. Total estimate amount is Rs 1,69,050.",
+                "extracted_fields": {"estimated_amount": 169050},
+                "confidence": 0.95,
+            },
+            {
+                "filename": "damage_photo_01.png",
+                "document_type": "damage_photo",
+                "summary": "Vehicle damage photo.",
+                "confidence": 0.85,
+            },
+        ],
+        "risk_signals": [],
+    }
+    ai_result = {
+        "intake_status": "incomplete",
+        "claim_type": "motor",
+        "policy_number": "MCA789012",
+        "claim_amount": 160000,
+        "estimated_amount": 169050,
+        "documents_received": ["Repair_Estimate_from_Quick_Fix_Motors.pdf", "damage_photo_01.png"],
+        "classified_documents": {
+            "Repair_Estimate_from_Quick_Fix_Motors.pdf": "repair_estimate",
+            "damage_photo_01.png": "damage_photo",
+        },
+        "missing_documents": ["repair_invoice"],
+        "missing_information": ["repair_invoice"],
+        "message_to_customer": "Please provide the final repair invoice for your vehicle to proceed.",
+        "consistency_issues": [
+            {
+                "field": "estimated_amount",
+                "email": 160000,
+                "document": 169050,
+            }
+        ],
+    }
+
+    result = enrich_intake_result(
+        ai_result,
+        "Policy Number: MCA789012. Motor accident. Estimated Repair Cost: Rs 1,60,000.",
+        docs,
+    )
+
+    assert result["missing_documents"] == []
+    assert "repair_invoice" not in result["missing_information"]
+    assert result["message_to_customer"] is None
+    assert result["intake_status"] == "needs_review"
+    assert result["next_recommended_agent"] == "human_reviewer"
+
+
 def test_scanned_pdf_is_rendered_for_multimodal_analysis(monkeypatch):
     pdf_path = "tests/Property Claim - Fire Damage/Damage Assessment & Valuation.pdf"
 
