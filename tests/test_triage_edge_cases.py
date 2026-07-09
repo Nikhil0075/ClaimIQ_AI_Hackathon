@@ -105,6 +105,12 @@ def test_motor_registration_hr_number_does_not_trigger_medical_emergency():
             "Other vehicle registration: HR 26 CD 5678. No injuries reported."
         ),
         "claim_summary": "Motor own-damage claim for Maruti Swift Dzire.",
+        "documents_summary": {
+            "aggregate_summary": (
+                "Multiple images show significant damage to the vehicles, particularly the Maruti Swift Dzire. "
+                "Image of a damaged vehicle showing significant damage to the left side. No injuries reported."
+            ),
+        },
     }
 
     result = safe_triage(

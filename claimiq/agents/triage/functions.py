@@ -655,7 +655,19 @@ def _dedupe_flags(flags: list[Any]) -> list[dict[str, Any]]:
 
 
 def _has_any(text: str, terms: tuple[str, ...]) -> bool:
-    return any(term in text for term in terms)
+    return any(_term_in_text(text, term) for term in terms)
+
+
+def _term_in_text(text: str, term: str) -> bool:
+    term = str(term or "").lower().strip()
+    if not term:
+        return False
+    if term == "diagnos":
+        return bool(re.search(r"\bdiagnos\w*", text))
+    pattern = re.escape(term).replace(r"\ ", r"\s+")
+    if re.fullmatch(r"[a-z0-9]+", term):
+        return bool(re.search(rf"\b{pattern}\b", text))
+    return bool(re.search(rf"(?<![a-z0-9]){pattern}(?![a-z0-9])", text))
 
 
 def _confidence_value(value: Any, default: float = 0.8) -> float:
