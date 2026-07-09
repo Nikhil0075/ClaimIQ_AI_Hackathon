@@ -103,6 +103,26 @@ def test_copilot_enrichment_tolerates_string_fields_from_model():
     assert "Route: special_investigation" in result["adjuster_brief_markdown"]
 
 
+def test_not_covered_payable_explanation_does_not_imply_payout():
+    result = enrich_copilot_brief(
+        {},
+        "CLM-NOT-COVERED",
+        {"claim_type": "motor", "claim_amount": 160000, "currency": "INR"},
+        {
+            "coverage_status": "not_covered",
+            "coverage_reasoning": "Incident occurred after policy expiry.",
+            "calculation_methodology": {"sum_insured": 450000, "deductible": 5000},
+        },
+        {"fraud_score": 20, "risk_level": "low"},
+        {"routing": "senior_review", "priority": "high", "required_human_approval": True},
+    )
+
+    payable = result["plain_english_explanations"]["payable_calculation"]
+    assert "No payable amount is calculated" in payable
+    assert "Policy limit reference: INR 450,000" in payable
+    assert "Final payable amount still requires authorized review" not in payable
+
+
 def test_report_confidence_formatter_accepts_labels():
     assert _format_confidence("high") == "High"
     assert _format_confidence(0.75) == "75%"

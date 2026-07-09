@@ -260,8 +260,8 @@ def clinical_assessment(
     urgency = "Routine"
     medical_necessity = "Supported" if is_medical else NON_MEDICAL_NA
 
-    emergency = any(term in text for term in EMERGENCY_TERMS) or _emergency_vitals(text)
-    urgent = any(term in text for term in URGENT_TERMS)
+    emergency = is_medical and (any(term in text for term in EMERGENCY_TERMS) or _emergency_vitals(text))
+    urgent = is_medical and any(term in text for term in URGENT_TERMS)
     # Non-medical severity: total loss, displacement, evacuation, stranded, etc.
     # Gated on non-medical claims so broad terms ("injured") cannot sidestep
     # the clinical rules on health claims.
@@ -324,6 +324,9 @@ def clinical_assessment(
 
 def clinical_flags(intake: dict[str, Any]) -> list[dict[str, Any]]:
     text = _clinical_text(intake)
+    claim_type = str(intake.get("claim_type") or "").lower()
+    if not _is_medical_claim(claim_type, text):
+        return []
     flags: list[dict[str, Any]] = []
     patient_age = int(float(intake.get("patient_age") or 0))
 
@@ -357,6 +360,7 @@ def apply_hard_overrides(result: dict[str, Any], intake: dict[str, Any], coverag
     """Preserve non-negotiable clinical and compliance rules after AI synthesis."""
     safe = safe_triage(intake, coverage, fraud)
     merged = dict(result or {})
+    safe_is_non_medical = safe.get("medical_necessity") == NON_MEDICAL_NA
     for key in (
         "clinical_priority",
         "urgency",
@@ -370,19 +374,45 @@ def apply_hard_overrides(result: dict[str, Any], intake: dict[str, Any], coverag
         merged[key] = merged.get(key) or safe[key]
 
     merged["clinical_flags"] = _dedupe_flags((merged.get("clinical_flags") or []) + safe["clinical_flags"])
-    if safe["priority"] == "critical" or safe["routing"] in {
+    if safe_is_non_medical and _is_medical_route(merged.get("routing")):
+        for key in ("triage_color", "priority", "routing", "sla_hours"):
+            merged[key] = safe[key]
+        merged["human_approval_reasons"] = _non_medical_reasons(safe.get("human_approval_reasons") or [])
+        merged["clinical_flags"] = safe["clinical_flags"]
+        merged["requires_manual_medical_review"] = False
+    elif safe["priority"] == "critical" or safe["routing"] in {
         "medical_emergency_review", "medical_document_request", "urgent_claim_review",
     }:
         # Deterministic urgency (medical or severe non-medical impact) may not be
         # downgraded by AI synthesis.
         for key in ("triage_color", "priority", "routing", "sla_hours"):
             merged[key] = safe[key]
+    if safe_is_non_medical:
+        merged["human_approval_reasons"] = _non_medical_reasons(merged.get("human_approval_reasons") or [])
+        merged["requires_manual_medical_review"] = False
     merged["priority"] = _priority_label(merged.get("priority"), safe["priority"])
     merged["triage_color"] = str(merged.get("triage_color") or safe["triage_color"]).lower()
     merged["routing"] = str(merged.get("routing") or safe["routing"])
     merged.setdefault("recommended_next_steps", safe["recommended_next_steps"])
     merged["sla_hours"] = SLA_MAP.get(merged.get("routing"), merged.get("sla_hours", 48))
     return merged
+
+
+def _is_medical_route(value: Any) -> bool:
+    return str(value or "").lower() in {
+        "medical_emergency_review",
+        "urgent_medical_review",
+        "medical_document_request",
+    }
+
+
+def _non_medical_reasons(reasons: list[Any]) -> list[str]:
+    blocked = ("vital", "clinical", "medical", "hospital", "diagnosis", "procedure")
+    return [
+        str(reason)
+        for reason in reasons
+        if reason and not any(term in str(reason).lower() for term in blocked)
+    ]
 
 
 def _clinical_text(intake: dict[str, Any]) -> str:

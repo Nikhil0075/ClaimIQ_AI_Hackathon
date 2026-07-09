@@ -96,6 +96,56 @@ def test_standard_mri_routes_to_radiology_without_emergency():
     assert result["severity_score"] < 50
 
 
+def test_motor_registration_hr_number_does_not_trigger_medical_emergency():
+    intake = {
+        "claim_type": "motor",
+        "claim_amount": 160000,
+        "incident_description": (
+            "The car collided with another vehicle on the right side. "
+            "Other vehicle registration: HR 26 CD 5678. No injuries reported."
+        ),
+        "claim_summary": "Motor own-damage claim for Maruti Swift Dzire.",
+    }
+
+    result = safe_triage(
+        intake,
+        {"coverage_status": "not_covered"},
+        {"fraud_score": 60, "duplicate_claim_ids": ["CLM-OLD"]},
+    )
+
+    assert result["routing"] == "special_investigation"
+    assert result["requires_manual_medical_review"] is False
+    assert not any("vital" in reason.lower() for reason in result["human_approval_reasons"])
+    assert not result["clinical_flags"]
+
+
+def test_non_medical_claim_overrides_model_medical_route():
+    intake = {
+        "claim_type": "motor",
+        "incident_description": "Other vehicle registration: HR 26 CD 5678.",
+        "claim_amount": 160000,
+    }
+
+    merged = apply_hard_overrides(
+        {
+            "triage_color": "red",
+            "priority": "critical",
+            "routing": "medical_emergency_review",
+            "human_approval_reasons": [
+                "Vital signs cross emergency threshold and require immediate clinical review.",
+                "Duplicate claim detected",
+            ],
+        },
+        intake,
+        {"coverage_status": "not_covered"},
+        {"fraud_score": 60, "duplicate_claim_ids": ["CLM-OLD"]},
+    )
+
+    assert merged["routing"] == "special_investigation"
+    assert merged["requires_manual_medical_review"] is False
+    assert not any("vital" in reason.lower() for reason in merged["human_approval_reasons"])
+
+
 def test_triage_hard_overrides_accept_labeled_flag_confidence():
     result = {
         "priority": "normal",

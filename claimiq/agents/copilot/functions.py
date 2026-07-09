@@ -245,7 +245,19 @@ def _plain_english_explanations(
 
 
 def _calculation_explanation(claim_amount: str, coverage: dict[str, Any]) -> str:
+    coverage_status = str(coverage.get("coverage_status") or "").lower()
     methodology = coverage.get("calculation_methodology") if isinstance(coverage.get("calculation_methodology"), dict) else {}
+    if coverage_status == "not_covered":
+        reason = str(coverage.get("coverage_reasoning") or coverage.get("denial_reason") or "").strip()
+        parts = [f"No payable amount is calculated because coverage is currently not_covered. Claimed amount: {claim_amount}."]
+        if methodology.get("sum_insured") is not None:
+            parts.append(f"Policy limit reference: {_money(methodology.get('sum_insured'))}.")
+        if methodology.get("deductible") is not None:
+            parts.append(f"Deductible reference: {_money(methodology.get('deductible'))}.")
+        if reason:
+            parts.append(f"Reason: {reason}")
+        parts.append("Any payment decision requires authorized human review and policy verification.")
+        return " ".join(parts)
     if methodology:
         parts = [f"Claimed amount: {claim_amount}."]
         if methodology.get("sum_insured") is not None:
