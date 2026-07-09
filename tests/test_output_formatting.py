@@ -1,3 +1,7 @@
+from io import BytesIO
+
+from pypdf import PdfReader
+
 from claimiq.tools.email_tool import _tpl_routing_assigned
 from claimiq.tools.report_tool import generate_claim_report
 
@@ -62,3 +66,19 @@ def test_report_generation_tolerates_numeric_priority():
 
     assert pdf_bytes
     assert pdf_bytes.startswith(b"%PDF")
+
+
+def test_report_next_steps_keeps_string_as_single_item():
+    outputs = _outputs_with_numeric_priority()
+    outputs["triage"]["recommended_next_steps"] = "Assign to Motor Assessor."
+    outputs["copilot"]["suggested_next_steps"] = ["Fraud investigator should review highlighted signals."]
+
+    pdf_bytes = generate_claim_report("CLM-NEXT-STEPS-STRING", outputs)
+    assert pdf_bytes
+
+    text = "\n".join(
+        page.extract_text() or ""
+        for page in PdfReader(BytesIO(pdf_bytes)).pages
+    )
+    assert "Assign to Motor Assessor." in text
+    assert "1. A\n2. s" not in text

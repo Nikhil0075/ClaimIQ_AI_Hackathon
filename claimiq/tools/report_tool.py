@@ -186,6 +186,27 @@ def _str_field(val: Any, prefer_key: str = "summary") -> str:
     return str(val)
 
 
+def _as_list(value: Any) -> list[Any]:
+    """Coerce optional list-like model output without splitting plain strings."""
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    if isinstance(value, tuple | set):
+        return list(value)
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return []
+        lines = [
+            re.sub(r"^\s*(?:[-*]|\d+[.)])\s*", "", line).strip()
+            for line in text.splitlines()
+        ]
+        lines = [line for line in lines if line]
+        return lines if len(lines) > 1 else [text]
+    return [value]
+
+
 def _clean(val: Any, default: str = "N/A") -> str:
     """Sanitise a field value for display; hide internal sentinels."""
     if val is None:
@@ -362,7 +383,7 @@ def _build_pdf(
 
     fraud_score  = int(fraud.get("fraud_score") or 0)
     risk_level   = _upper_label(fraud.get("risk_level"), "low")
-    signals      = fraud.get("signals") or []
+    signals      = _as_list(fraud.get("signals"))
     cov_status   = _upper_label(coverage.get("coverage_status"), "needs_review").replace("_", " ")
     triage_color = _upper_label(triage.get("triage_color"), "amber")
     priority     = _upper_label(triage.get("priority"), "medium")
@@ -378,11 +399,11 @@ def _build_pdf(
     cov_tint     = GREEN_T if "COVERED" == cov_status else RED_T if "NOT COVERED" == cov_status else AMBER_T
 
     # ── Derived / cross-referenced fields (hoisted so the cover can use them) ──
-    excls    = coverage.get("applicable_exclusions") or []
+    excls    = _as_list(coverage.get("applicable_exclusions"))
     limits   = coverage.get("applicable_limits") or {}
     max_amt  = limits.get("max_claim_amount") if isinstance(limits, dict) else None
     deduct   = limits.get("deductible")       if isinstance(limits, dict) else None
-    reasons  = triage.get("human_approval_reasons") or []
+    reasons  = _as_list(triage.get("human_approval_reasons"))
     rec_action = _pretty(str(fraud.get("recommended_action") or "proceed"))
 
     # Rough pre-adjudication payable ceiling: min(claimed, limit) - deductible.
@@ -400,8 +421,8 @@ def _build_pdf(
     # Copilot extras (same object the Adjuster Guide consumes) -- surfaced here too.
     explanations = copilot.get("plain_english_explanations") if isinstance(
         copilot.get("plain_english_explanations"), dict) else {}
-    guardrails   = copilot.get("decision_guardrails") or []
-    cop_next     = copilot.get("suggested_next_steps") or []
+    guardrails   = _as_list(copilot.get("decision_guardrails"))
+    cop_next     = _as_list(copilot.get("suggested_next_steps"))
 
     # ── Document setup ────────────────────────────────────────────────────────
     buf = io.BytesIO()
@@ -739,13 +760,13 @@ def _build_pdf(
     ]
     story.append(data_table(det_rows, [cw * 0.38, cw * 0.62]))
 
-    missing = intake.get("missing_information") or []
+    missing = _as_list(intake.get("missing_information"))
     if missing:
         story.append(Spacer(1, 8))
         story.append(Paragraph("Missing Information", h2))
         story.append(accent_list([str(m) for m in missing[:6]], accent=AMBER, tint=AMBER_T))
 
-    docs = intake.get("documents_mentioned") or []
+    docs = _as_list(intake.get("documents_mentioned"))
     if docs:
         story.append(Spacer(1, 4))
         story.append(Paragraph(
@@ -820,7 +841,7 @@ def _build_pdf(
         story.append(Paragraph("Applicable Exclusions", h2))
         story.append(accent_list([_pretty(e) for e in excls[:6]], accent=RED, tint=RED_T))
 
-    secs = coverage.get("policy_sections_referenced") or []
+    secs = _as_list(coverage.get("policy_sections_referenced"))
     if secs:
         sec_text = _fmt_policy_sections(secs)
         if sec_text:
@@ -922,7 +943,7 @@ def _build_pdf(
     story.append(Spacer(1, 8))
     story.append(banner(f"Recommended Action:  {rec_action}", ac_color, size=10))
 
-    dup_ids = fraud.get("duplicate_claim_ids") or []
+    dup_ids = _as_list(fraud.get("duplicate_claim_ids"))
     if dup_ids:
         story.append(Spacer(1, 8))
         story.append(accent_list(
@@ -1010,7 +1031,7 @@ def _build_pdf(
         pe_tbl.setStyle(TableStyle(pe_sty))
         story.append(pe_tbl)
 
-    checklist = copilot.get("approval_checklist") or []
+    checklist = _as_list(copilot.get("approval_checklist"))
     if checklist:
         story.append(Spacer(1, 14))
         story.append(section_header("Adjuster Checklist", "Adjuster Copilot"))
@@ -1026,14 +1047,14 @@ def _build_pdf(
                 chk_rows.append([str(i), P(str(item)), "Pending"])
         story.append(data_table(chk_rows, [cw*0.07, cw*0.68, cw*0.25]))
 
-    open_qs = copilot.get("open_questions") or []
+    open_qs = _as_list(copilot.get("open_questions"))
     if open_qs:
         story.append(Spacer(1, 10))
         story.append(Paragraph("Open Questions for Adjuster", h2))
         story.append(accent_list(
             [f"{i}.  {q}" for i, q in enumerate(open_qs[:8], 1)], accent=INDIGO_600, tint=INDIGO_50))
 
-    next_steps = list(triage.get("recommended_next_steps") or [])
+    next_steps = _as_list(triage.get("recommended_next_steps"))
     for s in cop_next:
         if str(s) not in {str(x) for x in next_steps}:
             next_steps.append(s)
