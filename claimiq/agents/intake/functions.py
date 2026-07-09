@@ -493,7 +493,17 @@ def _as_positive_amount(value: Any) -> float:
 # Field names in document extraction output that plausibly carry the claim value.
 _AMOUNT_FIELD_HINTS = ("amount", "estimate", "total", "cost", "value", "bill")
 # Fields that must never be mistaken for the claimed amount.
-_AMOUNT_FIELD_BLOCKLIST = ("sum_insured", "policy_limit", "deductible", "premium", "co_pay", "copay")
+_AMOUNT_FIELD_BLOCKLIST = (
+    "sum_insured",
+    "policy_limit",
+    "policy_amount",
+    "policy_value",
+    "coverage_limit",
+    "deductible",
+    "premium",
+    "co_pay",
+    "copay",
+)
 
 
 def _best_document_claim_amount(docs: dict[str, Any]) -> float:

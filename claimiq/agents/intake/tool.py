@@ -284,7 +284,8 @@ def analyze_uploaded_document(document: dict[str, Any]) -> dict[str, Any]:
     if mime_type == "application/pdf" or filename.lower().endswith(".pdf"):
         rendered = _render_pdf_first_page(data)
         if rendered:
-            result = _analyze_image_document(filename, "image/png", rendered, source_modality="scanned_pdf")
+            image_data, image_mime_type = rendered
+            result = _analyze_image_document(filename, image_mime_type, image_data, source_modality="scanned_pdf")
             result.setdefault("modality", "pdf_image")
             result.setdefault("mime_type", mime_type)
             result.setdefault("rendered_from_pdf", True)
@@ -445,35 +446,60 @@ def _extract_text_document(filename: str, mime_type: str, data: bytes) -> str:
     return ""
 
 
-def _render_pdf_first_page(data: bytes) -> bytes | None:
+def _render_pdf_first_page(data: bytes) -> tuple[bytes, str] | None:
     pdftoppm = _pdftoppm_path()
-    if not pdftoppm:
-        return None
-    tmp = None
+    if pdftoppm:
+        tmp = None
+        try:
+            base_tmp = _pdf_render_tmp_dir()
+            tmp = os.path.join(base_tmp, f"claimiq_pdf_{uuid.uuid4().hex}")
+            os.makedirs(tmp, exist_ok=True)
+            pdf_path = os.path.join(tmp, "document.pdf")
+            prefix = os.path.join(tmp, "page")
+            with open(pdf_path, "wb") as handle:
+                handle.write(data)
+            subprocess.run(
+                [pdftoppm, "-png", "-f", "1", "-l", "1", "-r", "150", pdf_path, prefix],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=30,
+            )
+            rendered_path = os.path.join(tmp, "page-1.png")
+            if os.path.exists(rendered_path):
+                with open(rendered_path, "rb") as handle:
+                    return handle.read(), "image/png"
+        except Exception:
+            pass
+        finally:
+            if tmp:
+                shutil.rmtree(tmp, ignore_errors=True)
+
+    return _extract_first_pdf_image(data)
+
+
+def _extract_first_pdf_image(data: bytes) -> tuple[bytes, str] | None:
     try:
-        base_tmp = _pdf_render_tmp_dir()
-        tmp = os.path.join(base_tmp, f"claimiq_pdf_{uuid.uuid4().hex}")
-        os.makedirs(tmp, exist_ok=True)
-        pdf_path = os.path.join(tmp, "document.pdf")
-        prefix = os.path.join(tmp, "page")
-        with open(pdf_path, "wb") as handle:
-            handle.write(data)
-        subprocess.run(
-            [pdftoppm, "-png", "-f", "1", "-l", "1", "-r", "150", pdf_path, prefix],
-            check=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=30,
-        )
-        rendered_path = os.path.join(tmp, "page-1.png")
-        if os.path.exists(rendered_path):
-            with open(rendered_path, "rb") as handle:
-                return handle.read()
+        import io
+        from pypdf import PdfReader
+
+        reader = PdfReader(io.BytesIO(data))
+        for page in reader.pages[:3]:
+            images = list(getattr(page, "images", []) or [])
+            if not images:
+                continue
+            image = max(images, key=lambda item: len(getattr(item, "data", b"") or b""))
+            image_data = getattr(image, "data", b"") or b""
+            if not image_data:
+                continue
+            name = str(getattr(image, "name", "") or "").lower()
+            if name.endswith((".jpg", ".jpeg")):
+                return image_data, "image/jpeg"
+            if name.endswith(".png"):
+                return image_data, "image/png"
+            return image_data, "image/jpeg"
     except Exception:
         return None
-    finally:
-        if tmp:
-            shutil.rmtree(tmp, ignore_errors=True)
     return None
 
 

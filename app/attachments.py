@@ -264,7 +264,7 @@ def _analyze_one(att: Attachment) -> Optional[dict]:
                 prompt = f"PDF DOCUMENT: {att.filename}\n\n{text_content[:6000]}\n\n{prompt_text}"
                 result = generate_json(prompt, temperature=0.05, max_tokens=4096, model=ATTACHMENT_TEXT_MODEL)
             else:
-                result = _fallback_visual_metadata(att, "scanned_pdf")
+                result = _analyze_pdf_image(att, prompt_text) or _fallback_visual_metadata(att, "scanned_pdf")
         elif att.is_docx():
             text_content = _extract_docx_text(att)
             if text_content:
@@ -312,6 +312,35 @@ def _analyze_image(att: Attachment, prompt_text: str) -> dict:
     return result
 
 
+def _analyze_pdf_image(att: Attachment, prompt_text: str) -> Optional[dict]:
+    extracted = _extract_first_pdf_image(att.data)
+    if not extracted:
+        return None
+    image_data, image_mime_type = extracted
+    messages = [
+        {"role": "system", "content": ANALYZE_SYSTEM},
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": (
+                        f"{prompt_text}\n\n"
+                        "This page was extracted from a scanned or image-based PDF. "
+                        "Read visible text and visual evidence directly from the image."
+                    ),
+                },
+                image_content_part(image_data, image_mime_type),
+            ],
+        },
+    ]
+    result = generate_json_messages(messages, temperature=0.05, max_tokens=4096, model=ATTACHMENT_VISION_MODEL)
+    result.setdefault("modality", "pdf_image")
+    result.setdefault("mime_type", att.mime_type)
+    result.setdefault("rendered_from_pdf", True)
+    return result
+
+
 def _extract_pdf_text(att: Attachment) -> str:
     """Best-effort PDF text extraction without making pypdf a hard dependency."""
     try:
@@ -322,6 +351,31 @@ def _extract_pdf_text(att: Attachment) -> str:
     except Exception as exc:
         log.info("[Attachments] PDF text extraction unavailable for %s: %s", att.filename, exc)
         return ""
+
+
+def _extract_first_pdf_image(data: bytes) -> Optional[tuple[bytes, str]]:
+    try:
+        from pypdf import PdfReader
+
+        reader = PdfReader(io.BytesIO(data))
+        for page in reader.pages[:3]:
+            images = list(getattr(page, "images", []) or [])
+            if not images:
+                continue
+            image = max(images, key=lambda item: len(getattr(item, "data", b"") or b""))
+            image_data = getattr(image, "data", b"") or b""
+            if not image_data:
+                continue
+            name = str(getattr(image, "name", "") or "").lower()
+            if name.endswith((".jpg", ".jpeg")):
+                return image_data, "image/jpeg"
+            if name.endswith(".png"):
+                return image_data, "image/png"
+            return image_data, "image/jpeg"
+    except Exception as exc:
+        log.info("[Attachments] PDF image extraction unavailable: %s", exc)
+        return None
+    return None
 
 
 def _extract_docx_text(att: Attachment) -> str:

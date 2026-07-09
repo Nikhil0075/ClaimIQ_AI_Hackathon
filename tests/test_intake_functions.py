@@ -195,3 +195,35 @@ def test_scanned_pdf_is_rendered_for_multimodal_analysis(monkeypatch):
     assert result["document_type"] == "damage_valuation"
     assert result["rendered_from_pdf"] is True
     assert result["modality"] == "pdf_image"
+
+
+def test_scanned_pdf_embedded_image_fallback_without_poppler(monkeypatch):
+    pdf_path = "tests/Motor Claim - Car Accident/Police FIR Copy.pdf"
+
+    def fake_generate_json_messages(messages, **kwargs):
+        content = messages[1]["content"]
+        assert content[1]["image_url"]["url"].startswith("data:image/jpeg;base64,")
+        assert "SOURCE_MODALITY: scanned_pdf" in content[0]["text"]
+        return {
+            "filename": "Police FIR Copy.pdf",
+            "document_type": "fir_or_police_report",
+            "summary": "Embedded PDF image was analyzed.",
+            "extracted_fields": {"fir_number": "FIR-123"},
+            "quality_issues": [],
+            "risk_signals": [],
+            "supports_claim": True,
+            "confidence": 0.85,
+        }
+
+    monkeypatch.setattr("claimiq.agents.intake.tool._pdftoppm_path", lambda: None)
+    monkeypatch.setattr("claimiq.agents.intake.tool.generate_json_messages", fake_generate_json_messages)
+    with open(pdf_path, "rb") as handle:
+        result = analyze_uploaded_document({
+            "filename": "Police FIR Copy.pdf",
+            "mime_type": "application/pdf",
+            "data": handle.read(),
+        })
+
+    assert result["document_type"] == "fir_or_police_report"
+    assert result["rendered_from_pdf"] is True
+    assert result["modality"] == "pdf_image"
