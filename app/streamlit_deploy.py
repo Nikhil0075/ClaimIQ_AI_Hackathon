@@ -95,8 +95,10 @@ def configure_streamlit_cloud_runtime() -> None:
         log.warning("[Deploy] GOOGLE_OAUTH_CREDENTIALS_JSON is not set; Drive upload cannot authorize.")
 
     drive_token_json = _get_secret("GOOGLE_DRIVE_TOKEN_JSON")
+    drive_token_source = "GOOGLE_DRIVE_TOKEN_JSON" if drive_token_json else ""
     if not drive_token_json:
         drive_token_json = _build_drive_token_from_refresh_token(oauth_credentials_json)
+        drive_token_source = "GOOGLE_DRIVE_REFRESH_TOKEN" if drive_token_json else ""
     if drive_token_json:
         _write_json_secret(
             raw_value=drive_token_json,
@@ -104,6 +106,7 @@ def configure_streamlit_cloud_runtime() -> None:
             target_path=_drive_token_path(),
             env_name="GOOGLE_DRIVE_TOKEN_PATH",
         )
+        os.environ["CLAIMIQ_DRIVE_TOKEN_SOURCE"] = drive_token_source
         log.info("[Deploy] Google Drive authorized-user token configured")
     else:
         log.warning(

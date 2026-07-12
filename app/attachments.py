@@ -551,6 +551,38 @@ def _clear_cached_drive_token(reason: str) -> None:
         log.warning("[Drive] Could not clear rejected OAuth token %s: %s", DRIVE_TOKEN_PATH, exc)
 
 
+def _truthy_env(name: str) -> bool | None:
+    value = os.getenv(name)
+    if value is None:
+        return None
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _browser_oauth_allowed() -> bool:
+    """Return whether this runtime should attempt an interactive browser OAuth flow."""
+    override = _truthy_env("CLAIMIQ_ALLOW_BROWSER_OAUTH")
+    if override is not None:
+        return override
+    if os.getenv("CLAIMIQ_DRIVE_TOKEN_SOURCE") or os.getenv("GOOGLE_DRIVE_TOKEN_PATH"):
+        return False
+    if os.name != "nt" and not (
+        os.getenv("DISPLAY") or os.getenv("WAYLAND_DISPLAY") or os.getenv("BROWSER")
+    ):
+        return False
+    return True
+
+
+def _browser_oauth_unavailable_message() -> str:
+    return (
+        "Drive OAuth token is missing, expired, or revoked, and this runtime cannot "
+        "open a browser for a new consent flow. Regenerate the Drive token locally "
+        "with the same GOOGLE_OAUTH_CREDENTIALS client, then update the Streamlit "
+        "secret GOOGLE_DRIVE_TOKEN_JSON or GOOGLE_DRIVE_REFRESH_TOKEN. If the Google "
+        "OAuth consent app is in Testing mode, publish it to Production or refresh "
+        "tokens may expire/revoke unexpectedly."
+    )
+
+
 def _get_drive_service():
     """
     Build and cache the Drive API service using OAuth user credentials.
@@ -590,6 +622,8 @@ def _get_drive_service():
                     creds = None
 
             if not creds or not creds.valid:
+                if not _browser_oauth_allowed():
+                    raise RuntimeError(_browser_oauth_unavailable_message())
                 if not os.path.exists(CREDENTIALS_JSON):
                     raise FileNotFoundError(
                         f"credentials.json not found at {CREDENTIALS_JSON}. "
